@@ -19,42 +19,54 @@
 package org.apache.flink.table.planner.plan.nodes.exec.common;
 
 import org.apache.flink.api.dag.Transformation;
-import org.apache.flink.streaming.api.transformations.OneInputTransformation;
 import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.planner.codegen.CalcCodeGenerator;
 import org.apache.flink.table.planner.codegen.CodeGeneratorContext;
+import org.apache.flink.table.planner.codegen.CorrelateCodeGenerator;
 import org.apache.flink.table.planner.delegation.PlannerBase;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
 import org.apache.flink.table.planner.utils.JavaScalaConversionUtil;
-import org.apache.flink.table.runtime.operators.CodeGenOperatorFactory;
-import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
+import org.apache.flink.table.runtime.operators.join.FlinkJoinType;
 import org.apache.flink.table.types.logical.RowType;
 
+import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
+
+import javax.annotation.Nullable;
 
 import java.util.Collections;
 import java.util.Optional;
 
 /**
- * Base class for exec Calc.
+ * Base {@link ExecNode} which matches along with join a Java/Scala user defined table function.
  */
-public abstract class CommonExecCalc extends ExecNodeBase<RowData> {
-	private final RexProgram calcProgram;
+public abstract class CommonExecCorrelate extends ExecNodeBase<RowData> {
+	private final FlinkJoinType joinType;
+	@Nullable
+	private final RexProgram project;
+	private final RexCall invocation;
+	@Nullable
+	private final RexNode condition;
 	private final Class<?> operatorBaseClass;
 	private final boolean retainHeader;
 
-	public CommonExecCalc(
-			RexProgram calcProgram,
+	public CommonExecCorrelate(
+			FlinkJoinType joinType,
+			@Nullable RexProgram project,
+			RexCall invocation,
+			@Nullable RexNode condition,
 			Class<?> operatorBaseClass,
 			boolean retainHeader,
 			ExecEdge inputEdge,
 			RowType outputType,
 			String description) {
 		super(Collections.singletonList(inputEdge), outputType, description);
-		this.calcProgram = calcProgram;
+		this.joinType = joinType;
+		this.project = project;
+		this.invocation = invocation;
+		this.condition = condition;
 		this.operatorBaseClass = operatorBaseClass;
 		this.retainHeader = retainHeader;
 	}
@@ -66,33 +78,25 @@ public abstract class CommonExecCalc extends ExecNodeBase<RowData> {
 		final Transformation<RowData> inputTransform = inputNode.translateToPlan(planner);
 		final CodeGeneratorContext ctx = new CodeGeneratorContext(planner.getTableConfig())
 				.setOperatorBaseClass(operatorBaseClass);
-
-		final Optional<RexNode> condition;
-		if (calcProgram.getCondition() != null) {
-			condition = Optional.of(calcProgram.expandLocalRef(calcProgram.getCondition()));
-		} else {
-			condition = Optional.empty();
-		}
-
-		final CodeGenOperatorFactory<RowData> substituteStreamOperator = CalcCodeGenerator.generateCalcOperator(
+		final Transformation<RowData> transform = CorrelateCodeGenerator.generateCorrelateTransformation(
+				planner.getTableConfig(),
 				ctx,
 				inputTransform,
+				(RowType) inputNode.getOutputType(),
+				JavaScalaConversionUtil.toScala(Optional.ofNullable(project)),
+				invocation,
+				JavaScalaConversionUtil.toScala(Optional.ofNullable(condition)),
 				(RowType) getOutputType(),
-				calcProgram,
-				JavaScalaConversionUtil.toScala(condition),
+				joinType,
+				inputTransform.getParallelism(),
 				retainHeader,
-				getClass().getSimpleName());
-		final Transformation<RowData> transformation = new OneInputTransformation<>(
-				inputTransform,
-				getDesc(),
-				substituteStreamOperator,
-				InternalTypeInfo.of(getOutputType()),
-				inputTransform.getParallelism());
+				getClass().getSimpleName(),
+				getDesc());
 
 		if (inputsContainSingleton()) {
-			transformation.setParallelism(1);
-			transformation.setMaxParallelism(1);
+			transform.setParallelism(1);
+			transform.setMaxParallelism(1);
 		}
-		return transformation;
+		return transform;
 	}
 }

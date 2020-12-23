@@ -16,25 +16,44 @@
  * limitations under the License.
  */
 
-package org.apache.flink.table.planner.plan.nodes.exec.common;
+package org.apache.flink.table.planner.plan.nodes.exec.stream;
 
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecEdge;
-import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeBase;
+import org.apache.flink.table.planner.plan.nodes.exec.ExecNode;
+import org.apache.flink.table.planner.plan.nodes.exec.common.CommonExecCorrelate;
+import org.apache.flink.table.runtime.operators.AbstractProcessStreamOperator;
+import org.apache.flink.table.runtime.operators.join.FlinkJoinType;
 import org.apache.flink.table.types.logical.RowType;
 
-import java.util.Collections;
+import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexProgram;
+
+import javax.annotation.Nullable;
 
 /**
- * Base class for exec Exchange.
- *
- * <p>TODO Remove this class once its functionality is replaced by ExecEdge.
+ * Stream {@link ExecNode} which matches along with join a Java/Scala user defined table function.
  */
-public abstract class CommonExecExchange extends ExecNodeBase<RowData> {
-	public CommonExecExchange(
+public class StreamExecCorrelate extends CommonExecCorrelate implements StreamExecNode<RowData> {
+
+	public StreamExecCorrelate(
+			FlinkJoinType joinType,
+			@Nullable RexProgram project,
+			RexCall invocation,
+			@Nullable RexNode condition,
 			ExecEdge inputEdge,
 			RowType outputType,
 			String description) {
-		super(Collections.singletonList(inputEdge), outputType, description);
+		super(
+				joinType,
+				project,
+				invocation,
+				condition,
+				AbstractProcessStreamOperator.class,
+				true,
+				inputEdge,
+				outputType,
+				description);
 	}
 }
